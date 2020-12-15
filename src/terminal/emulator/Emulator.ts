@@ -1,8 +1,8 @@
-import { EmulatorState } from './emulator-state';
-import { suggestCommands } from './emulator/auto-complete';
-import * as CommandRunner from './emulator/command-runner';
-import { TermOutput } from './output';
-import { TermPlugin } from './types';
+import { EmulatorState } from '../emulator-state';
+import { TermOutput } from '../output';
+import { TermPlugin } from '../types';
+import { suggestCommands } from './auto-complete';
+import * as CommandRunner from './command-runner';
 
 export class Emulator {
   /**

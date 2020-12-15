@@ -9,6 +9,7 @@ live at <https://puzzle.wiisportsresorts.dev>.
 - web app: why not?
 - shell-like history: press up and down to traverse through time
 - win confetti
+- speedrun clock
 - puzzles:
   - lights out: a game where you have to turn all the lights off
     - has moves counter
@@ -18,7 +19,7 @@ live at <https://puzzle.wiisportsresorts.dev>.
     - 20 gold if win, 8 if tie
   - word unscramble: unscramble le word
     - 5 words of increasing difficulty
-    - can skip at the cost of 3 gold
+    - can skip at the cost of 5 gold
 
 ## technologies
 

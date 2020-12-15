@@ -1,9 +1,33 @@
+import ConfettiGenerator from 'confetti-js';
+
 import { setPrompt } from './prompt';
+import { Stopwatch, StopwatchPlugin } from './stopwatch';
 import { TermOutput } from './terminal';
 import { create as createCommands } from './terminal/emulator-state/command-mapping';
 import { Command, OutputRecord } from './terminal/types';
 
-const { error, text } = TermOutput;
+const confetti = new ConfettiGenerator({
+  target: 'confetti',
+  max: '250',
+  size: '1',
+  animate: true,
+  props: ['circle', 'square', 'triangle', 'line'],
+  colors: [
+    [165, 104, 246],
+    [230, 61, 135],
+    [0, 199, 228],
+    [253, 214, 126],
+  ],
+  clock: '40',
+  rotate: true,
+  start_from_edge: true,
+  respawn: true,
+});
+
+const stopwatch = new Stopwatch();
+export const stopwatchPLugin = new StopwatchPlugin(stopwatch);
+
+const { text } = TermOutput;
 
 const listify = (array: unknown[]): string => {
   switch (array.length) {
@@ -82,12 +106,24 @@ const puzzles = {
     state: Array(9).fill(null) as ('X' | 'O' | null)[],
     actions: 0,
   },
+  unscramble: {
+    wordList: [] as string[],
+    words: [] as { unscrambled: string; scrambled: string }[],
+    currentGuesses: new Set<string>(),
+    currentWord: 0,
+    actions: 0,
+  },
 };
+
+(async () => {
+  puzzles.unscramble.wordList = (await (await fetch('/words.txt')).text())
+    .split('\n')
+    .filter(v => !!v);
+})();
 
 const makeTTTBoard = (state: ('X' | 'O' | null)[]) => {
   if (state.length !== 9) throw new Error('invalid ttt board length ' + state.length);
   let board = puzzles.tictactoe.boardTemplate;
-  console.log(state);
   state.forEach((c, i) => {
     board = board.replace((i + 1).toString(), c === null ? ' ' : c);
   });
@@ -96,7 +132,8 @@ const makeTTTBoard = (state: ('X' | 'O' | null)[]) => {
 const checkTTTWinner = (state: ('X' | 'O' | null)[]) => {
   // im tired
   const all = (...indeces: number[]) => {
-    if (indeces.map(i => state[i]).every((v, __, a) => v === a[0])) return state[indeces[0]];
+    const items = indeces.map(i => state[i - 1]);
+    if (items.every((v, __, a) => v === a[0])) return state[indeces[0] - 1];
     return null;
   };
 
@@ -109,9 +146,9 @@ const checkTTTWinner = (state: ('X' | 'O' | null)[]) => {
     all(3, 6, 9),
     all(1, 5, 9),
     all(3, 5, 7),
-  ].filter(v => !!v)[0];
+  ].filter(v => v === 'X' || v === 'O')[0];
 
-  return winning ? winning : state.every(v => !!v) ? null : false;
+  return winning ? winning : !state.includes(null) ? null : false;
 };
 const getMapObject = () => map[location.y][location.x];
 const setNormalPrompt = () =>
@@ -126,7 +163,7 @@ setNormalPrompt();
 
 const addGold = (n: number) => {
   const existing = inventory.find(item => item.special === 'gold');
-  if (existing) existing.prefix === (parseInt(existing.prefix) + n).toString();
+  if (existing) existing.prefix = (parseInt(existing.prefix) + n).toString();
   else inventory.push(new Item(n.toString(), 'gold', 'gold'));
 };
 
@@ -134,21 +171,26 @@ export const startText = [
   text("Welcome. Solve the puzzles for free stuff. Type 'help' to get started."),
 ];
 
+addGold(10);
+
 const baseCommands: Record<string, Command> = {
   help: () => {
     if (mode === 'normal')
       return {
         output: [
-          text('Text game'),
-          text('Commands:'),
+          text('Normal commands:'),
           text('- inventory, i: show inventory'),
           text('- clear: clear screen'),
           text('- move, go <dir>: move around (up, down, left, right, or cardinal direction)'),
           text('- solve: solve puzzle if at a puzzle'),
           text('- map: show map'),
-          text('Prompt:'),
+          text('- clear: clear screen'),
+          text('Normap prompt:'),
           text('- location: (x, y)'),
           text('- current thing at your location: e.g. a door, nothing'),
+          text('Puzzle prompt:'),
+          text('- puzzle name: e.g. lights out'),
+          text('- move #: e.g. #3'),
         ],
       };
 
@@ -157,8 +199,9 @@ const baseCommands: Record<string, Command> = {
         return {
           output: [
             text('Commands:'),
-            text('- flip <n>: toggle the lamp at index n (not zero indexed)'),
+            text('- flip <n>, toggle <n>: toggle the lamp at index n (not zero indexed)'),
             text('- state: show current light state'),
+            text('- cancel, exit: exit puzzle'),
           ],
         };
       case 'tictactoe':
@@ -171,14 +214,16 @@ const baseCommands: Record<string, Command> = {
             text('Commands:'),
             text('- place <n>: place your piece at position n'),
             text('- board: show board state'),
+            text('- cancel, exit: exit game'),
           ],
         };
       case 'unscramble':
         return {
           output: [
             text('Commands:'),
-            text('- try <word>: submit an unscrambling of a word'),
-            text('- skip: skip a word for 3 gold'),
+            text('- try <word>, guess <word>: submit an unscrambling of a word'),
+            text('- skip: skip a word for 5 gold (counts as 3 guesses)'),
+            text('- cancel, exit: exit puzzle'),
           ],
         };
       default:
@@ -187,7 +232,6 @@ const baseCommands: Record<string, Command> = {
   },
   clear: () => ({ output: text('#CLEAR#') }),
   map: () => {
-    if (mode !== 'normal') throw new Error('solve the puzzle first!');
     let out = textMap;
     const replacePuzzle = (mapName: string, solvedState: string, unsolvedState: string) => {
       out = out.replace(
@@ -213,7 +257,7 @@ const baseCommands: Record<string, Command> = {
     };
   },
   inventory: () => {
-    if (mode !== 'normal') throw new Error('solve the puzzle first!');
+    inventory.sort((a, b) => (b.special === 'gold' ? -1 : a.special === 'gold' ? 1 : 0));
     return {
       output: [text(`You have ${listify(inventory)}.`)],
     };
@@ -253,8 +297,7 @@ const baseCommands: Record<string, Command> = {
   },
   solve: () => {
     if (mode !== 'normal') throw new Error('solve the puzzle first!');
-    if (getMapObject() === 'nothing' || getMapObject() === 'finaldoor')
-      throw new Error('no puzzle in current location');
+    if (getMapObject() === 'nothing') throw new Error('no puzzle in current location');
 
     if (solved.has(getMapObject())) return { output: text("You've already solved this puzzle!") };
 
@@ -279,6 +322,7 @@ const baseCommands: Record<string, Command> = {
         };
       case 'tictactoe':
         setPuzzlePrompt();
+        puzzles.tictactoe.actions = 0;
         puzzles.tictactoe.startingTurn = Math.random() > 0.5 ? 'X' : 'O';
         puzzles.tictactoe.state = Array(9).fill(null);
         if (puzzles.tictactoe.startingTurn === 'O') {
@@ -301,20 +345,82 @@ const baseCommands: Record<string, Command> = {
         };
       case 'unscramble':
         setPuzzlePrompt();
+        puzzles.unscramble.actions = 0;
+        const randomWordInRange = (min: number, max: number) => {
+          const filtered = puzzles.unscramble.wordList.filter(
+            v => v.length >= min && v.length <= max
+          );
+          return filtered[Math.floor(Math.random() * filtered.length - 1)];
+        };
+        const scramble = (word: string) => {
+          let out = word;
+          for (let i = 0; i < 10; i++)
+            out = out
+              .split('')
+              .sort(() => 0.5 - Math.random())
+              .join('');
+          return out;
+        };
+        const words = [
+          randomWordInRange(4, 5),
+          randomWordInRange(6, 8),
+          randomWordInRange(9, 10),
+          randomWordInRange(11, 12),
+          randomWordInRange(13, 15),
+        ];
+        puzzles.unscramble.words = words.map(w => ({ unscrambled: w, scrambled: scramble(w) }));
         return {
           output: [
             text(
               'Time to unscramble! The goal is to unscramble the 5 words given to you. Difficulty will rise throughout.'
             ),
+            text('Your first word: ' + puzzles.unscramble.words[0].scrambled),
             text("See 'help' for commands."),
           ],
         };
+      case 'finaldoor':
+        if (
+          inventory.some(i => i.name === 'red key') &&
+          inventory.some(i => i.name === 'green key') &&
+          inventory.some(i => i.name === 'blue key')
+        ) {
+          confetti.render();
+          setPrompt('');
+          stopwatch.stop();
+          document.getElementById('clock')?.classList.add('complete');
+          document.getElementsByTagName('input')[0].setAttribute('disabled', 'true');
+          return {
+            output: [
+              text('You insert the three keys into the door, and it opens!'),
+              text('*confetti*'),
+              text('‏'),
+              text("There isn't actually a prize, but take this confetti as my gift."),
+              text('‏'),
+              text(
+                `You finished with ${
+                  inventory.find(i => i.special == 'gold')?.prefix
+                } gold. Try again (reload the page) to play again and get more!`
+              ),
+              text(''),
+              text('Thanks for playing this puzzle game.'),
+            ],
+          };
+        } else {
+          mode = 'normal';
+          return {
+            output: [
+              text(
+                'There are three keyholes on the door, one red, one blue, and one green. I wonder where those keys could come from.'
+              ),
+            ],
+          };
+        }
       default:
-        throw new Error('INVALID STATE: not on normal or finaldoor but attempting to start solve');
+        throw new Error('INVALID STATE: not on nothing but attempting to start solve');
     }
   },
   flip: (__, args) => {
-    if (mode !== 'solve' && getMapObject() !== 'lightsout')
+    if (mode !== 'solve' || getMapObject() !== 'lightsout')
       throw new Error('Unknown command: flip');
 
     if (args.length !== 1) throw new Error('expected one integer');
@@ -362,7 +468,7 @@ const baseCommands: Record<string, Command> = {
     };
   },
   state: () => {
-    if (mode !== 'solve' && getMapObject() !== 'lightsout')
+    if (mode !== 'solve' || getMapObject() !== 'lightsout')
       throw new Error('Unknown command: state');
 
     return {
@@ -373,7 +479,7 @@ const baseCommands: Record<string, Command> = {
     };
   },
   place: (__, args) => {
-    if (mode !== 'solve' && getMapObject() !== 'tictactoe')
+    if (mode !== 'solve' || getMapObject() !== 'tictactoe')
       throw new Error('Unknown command: place');
 
     if (args.length !== 1) throw new Error('expected one integer');
@@ -388,6 +494,8 @@ const baseCommands: Record<string, Command> = {
     if (state[index - 1] !== null) return { output: text("There's already a piece there!") };
 
     state[index - 1] = 'X';
+    puzzles.tictactoe.actions++;
+    setPuzzlePrompt();
 
     const extraText: OutputRecord[] = [];
 
@@ -413,29 +521,32 @@ const baseCommands: Record<string, Command> = {
       setNormalPrompt();
     };
 
+    let aiPosition: number | null = null;
+
     let win = checkTTTWinner(state);
     if (win === 'X' || win === null) endCallback(win);
+    else {
+      // AI turn
+      if (state.includes(null)) {
+        while (aiPosition == null || puzzles.tictactoe.state[aiPosition] !== null)
+          aiPosition = Math.floor(Math.random() * 8);
+        state[aiPosition] = 'O';
+      }
 
-    // AI turn
-    let aiPosition: number | null = null;
-    if (!state.every(v => !!v)) {
-      while (aiPosition == null || puzzles.tictactoe.state[aiPosition] !== null)
-        aiPosition = Math.floor(Math.random() * 8);
-      state[aiPosition] = 'O';
+      win = checkTTTWinner(state);
+      if (win === 'O' || win === null) endCallback(win);
     }
-
-    win = checkTTTWinner(state);
-    if (win === 'O' || win === null) endCallback(win);
 
     return {
       output: [
-        ...(aiPosition ? [text(`AI placed in location ${aiPosition + 1}.`)] : []),
+        ...(aiPosition !== null ? [text(`AI placed in location ${aiPosition + 1}.`)] : []),
         ...makeTTTBoard(state),
+        ...extraText,
       ],
     };
   },
   board: () => {
-    if (mode !== 'solve' && getMapObject() !== 'tictactoe')
+    if (mode !== 'solve' || getMapObject() !== 'tictactoe')
       throw new Error('Unknown command: board');
 
     return {
@@ -443,10 +554,106 @@ const baseCommands: Record<string, Command> = {
     };
   },
   try: (__, args) => {
-    if (mode !== 'solve' && getMapObject() !== 'unscramble')
+    if (mode !== 'solve' || getMapObject() !== 'unscramble')
       throw new Error('Unknown command: try');
 
     if (args.length !== 1) throw new Error('expected one word');
+
+    console.log(`trying to solve #${puzzles.unscramble.currentWord}`);
+
+    const word = puzzles.unscramble.words[puzzles.unscramble.currentWord];
+
+    if (puzzles.unscramble.currentGuesses.has(args[0]))
+      return { output: text("You've already guessed that!") };
+
+    puzzles.unscramble.actions++;
+    setPuzzlePrompt();
+
+    const extraText: OutputRecord[] = [];
+    if (word.unscrambled.toLowerCase() === args[0].toLowerCase()) {
+      puzzles.unscramble.currentWord++;
+
+      console.log(`done, moving to #${puzzles.unscramble.currentWord}`);
+
+      extraText.push(text('Correct! The word was ' + word.unscrambled));
+
+      if (puzzles.unscramble.currentWord === 5) {
+        const n = puzzles.unscramble.actions;
+        const gold = n < 6 ? 30 : n < 10 ? 20 : n < 15 ? 15 : n < 20 ? 10 : 5;
+        inventory.push(new Item('a', 'green key'));
+        addGold(gold);
+        mode = 'normal';
+        solved.add('unscramble');
+        setNormalPrompt();
+        extraText.push(
+          text('Puzzle solved!'),
+          text(`You are rewarded with ${gold} gold for solving the puzzle in ${n} actions.`),
+          text(`You also receive a green key. These items have been added to your inventory.`)
+        );
+      } else {
+        extraText.push(
+          text('Next word: ' + puzzles.unscramble.words[puzzles.unscramble.currentWord].scrambled)
+        );
+      }
+    }
+    return {
+      output: extraText.length
+        ? extraText
+        : [text('Incorrect, try again!'), text('The word is: ' + word.scrambled)],
+    };
+  },
+  skip: () => {
+    if (mode !== 'solve' || getMapObject() !== 'unscramble')
+      throw new Error('Unknown command: skip');
+
+    const gold = parseInt(inventory.find(i => i.special == 'gold')?.prefix ?? '0');
+
+    if (gold < 5) return { output: text("You don't have enough gold!") };
+
+    addGold(-5);
+    puzzles.unscramble.currentWord++;
+
+    puzzles.lightsout.actions += 3;
+    setPuzzlePrompt();
+
+    const extraText: OutputRecord[] = [];
+
+    if (puzzles.unscramble.currentWord === 5) {
+      const n = puzzles.unscramble.actions;
+      const gold = n < 6 ? 30 : n < 10 ? 20 : n < 15 ? 15 : n < 20 ? 10 : 5;
+      inventory.push(new Item('a', 'green key'));
+      addGold(gold);
+      mode = 'normal';
+      solved.add('unscramble');
+      setNormalPrompt();
+      extraText.push(
+        text('Puzzle solved!'),
+        text(`You are rewarded with ${gold} gold for solving the puzzle in ${n} actions.`),
+        text(`You also receive a green key. These items have been added to your inventory.`)
+      );
+    } else {
+      extraText.push(
+        text('Next word: ' + puzzles.unscramble.words[puzzles.unscramble.currentWord].scrambled)
+      );
+    }
+
+    return {
+      output: [
+        text(
+          'Skipped word for 5 gold: the correct answer was ' +
+            puzzles.unscramble.words[puzzles.unscramble.currentWord - 1].unscrambled
+        ),
+        ...extraText,
+      ],
+    };
+  },
+  cancel: () => {
+    if (mode === 'normal') throw new Error('nothing to cancel');
+
+    mode = 'normal';
+    setNormalPrompt();
+
+    return { output: text(`Exited ${displayNames[getMapObject()]}.`) };
   },
 };
 
@@ -455,4 +662,7 @@ export const commands = createCommands({
   // aliases
   i: baseCommands.inventory,
   go: baseCommands.move,
+  exit: baseCommands.cancel,
+  guess: baseCommands.try,
+  toggle: baseCommands.flip,
 });

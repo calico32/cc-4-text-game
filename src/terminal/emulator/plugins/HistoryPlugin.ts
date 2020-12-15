@@ -29,6 +29,7 @@ export class HistoryPlugin implements TermPlugin {
   // Plugin contract
   onExecuteCompleted(state: EmulatorState): void {
     this.history = state.history;
+    this.index = 0;
   }
 
   // Plugin API

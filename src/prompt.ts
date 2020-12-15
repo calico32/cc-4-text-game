@@ -4,6 +4,8 @@ document.querySelector('#app')!.innerHTML = `
     <span id="prompt">&gt;&nbsp;</span>
     <input id="input" type="text" autofocus autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
   </div>
+  <div id="clock">00:00:00.000</div>
+  <canvas id="confetti"></canvas>
 `;
 
 let termPrompt: string;

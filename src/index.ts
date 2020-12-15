@@ -4,8 +4,6 @@ import { Emulator, EmulatorState, HistoryKeyboardPlugin, OutputType } from './te
 
 import './index.css';
 
-const app = document.querySelector('#app') as HTMLElement;
-
 const input = document.getElementById('input') as HTMLInputElement;
 const output = document.getElementById('output-wrapper') as HTMLElement;
 
@@ -67,7 +65,7 @@ input.addEventListener('keydown', event => {
   } else if (event.key === 'Enter') {
     event.preventDefault();
     const command = input.value;
-    state = emulator.execute(state, command, [history]);
+    state = emulator.execute(state, command, [history, game.stopwatchPLugin]);
     updateDisplay();
     input.value = '';
   }
